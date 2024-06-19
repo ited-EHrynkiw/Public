@@ -258,9 +258,9 @@ function InstallMsi {
 
         $InstalledMsi = $ProductCodes | Where-Object { $_ -eq $MSIGUID }
      
-
-        Write-Host "MSIGUID: $MSIGUID"
-        Write-Host "InstalledMsi: $InstalledMsi"
+        # Debug
+        #Write-Host "MSIGUID: $MSIGUID"
+        #Write-Host "InstalledMsi: $InstalledMsi"
 
         if ($MSIGUID = $InstalledMsi) {
             Log "Application '$InstallerName' installed successfully."
