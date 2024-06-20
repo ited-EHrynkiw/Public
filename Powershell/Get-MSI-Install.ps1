@@ -7,8 +7,8 @@ function Log {
     param(
         [string]$Message
     )
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Write-Host "$timestamp - $Message"
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Write-Host "$Timestamp - $Message"
 }
 
 function DownloadFile {
@@ -24,14 +24,14 @@ function DownloadFile {
         Log "File $InstallerName already exists at $OutputPath."
         return $OutputPath
     }
-    $webClient = New-Object -TypeName System.Net.WebClient
+    $WebClient = New-Object -TypeName System.Net.WebClient
     $File = $null
     if (-not (Test-Path -Path $Path)) {
         New-Item -Path $Path -ItemType Directory -Force | Out-Null
     }
     try {
         Log "Download of $InstallerName start"
-        $webClient.DownloadFile($Url, $OutputPath)
+        $WebClient.DownloadFile($Url, $OutputPath)
         Log "Download of $InstallerName done"
         $File = $OutputPath
     }
@@ -39,15 +39,25 @@ function DownloadFile {
         Log "ERROR: Download of $InstallerName failed - $_"
     }
     finally {
-        $webClient.Dispose()
+        $WebClient.Dispose()
     }
     return $File
 }
 
 function Get-MSIFileInformation {
 
-    # Usage: Get-MSIFileInformation -FilePath "C:\path\to\file.msi"
-    
+    <#
+        .SYNOPSIS
+        
+        Source: https://github.com/itpro-tips/PowerShell-Toolbox/blob/master/Get-MSIFileInformation.ps1
+        
+        Displays all properties of an MSI file
+
+        .EXAMPLE
+        
+        Usage: Get-MSIFileInformation -FilePath "C:\path\to\file.msi"
+    #>
+
     param(
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         [ValidateNotNullOrEmpty()]
@@ -189,13 +199,23 @@ function Get-MSIFileInformation {
 
 function Get-InstalledMSIPackages {
 
-    # Example usage:
-    # Get all fields
-    # Get-InstalledMSIPackages
-    # Get only ProductCode field
-    # Get-InstalledMSIPackages -Fields "ProductCode"
-    # Get multiple fields
-    # Get-InstalledMSIPackages -Fields @("ProductCode", "ProductName")
+    <#
+        .SYNOPSIS
+
+        Retrieves information about installed MSI packages.
+
+        .EXAMPLE
+
+        Show all fields for installed MSI packages
+        Get-InstalledMSIPackages
+
+        Show only "ProductCode" field
+        Get-InstalledMSIPackages -Fields "ProductCode"
+
+        Show multiple fields
+        Get-InstalledMSIPackages -Fields @("ProductCode", "ProductName")
+
+    #>
 
     param(
         [Parameter(Mandatory = $false)]
@@ -236,7 +256,7 @@ function Get-InstalledMSIPackages {
     return $InstalledProducts
 }
 
-function InstallMsi {
+function InstallMSI {
     param(
         [Parameter(Mandatory = $true)]
         [string]$MSIPath,
@@ -256,55 +276,13 @@ function InstallMsi {
         # Convert the output to an array of strings for processing
         $ProductCodes = $InstalledPackages | Select-Object -ExpandProperty ProductCode
 
-        $InstalledMsi = $ProductCodes | Where-Object { $_ -eq $MSIGUID }
+        $InstalledMSI = $ProductCodes | Where-Object { $_ -eq $MSIGUID }
      
-        # Debug
-        #Write-Host "MSIGUID: $MSIGUID"
-        #Write-Host "InstalledMsi: $InstalledMsi"
+        # Debugging
+        # Write-Host "MSIGUID: $MSIGUID"
+        # Write-Host "InstalledMSI: $InstalledMSI"
 
-        if ($MSIGUID = $InstalledMsi) {
-            Log "Application '$InstallerName' installed successfully."
-            Log "MSI installation log file: $LogPath"
-            return $true
-        }
-        else {
-            throw "Application '$InstallerName' not found after installation."            
-        }
-    }
-    catch {
-        Log "ERROR: MSI installation failed - $_"
-        Log "MSI installation failed with exit code $($Process.ExitCode). See log file: $LogPath"
-        return $false
-    }
-}
-
-function InstallMsi {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$MSIPath,
-        [Parameter(Mandatory = $true)]
-        [string]$InstallerName
-    )
-    $LogPath = Join-Path -Path (Split-Path -Path $MSIPath -Parent) -ChildPath "$InstallerName-log.txt"
-    try {
-        Log "Installing MSI from $MSIPath"
-        $Process = (Start-Process msiexec.exe -ArgumentList "/i `"$MSIPath`" /log `"$LogPath`" /quiet /norestart" -Wait -PassThru).ExitCode
-        $Process.ExitCode
-        
-        # Get the ProductCode of the MSI to be installed
-        $MSIGUID = Get-MSIFileInformation $MSIPath | Select-Object -ExpandProperty ProductCode
-        # Run Get-InstalledMSIPackages and capture the output
-        $InstalledPackages = Get-InstalledMSIPackages -Fields "ProductCode"
-        # Convert the output to an array of strings for processing
-        $ProductCodes = $InstalledPackages | Select-Object -ExpandProperty ProductCode
-
-        $InstalledMsi = $ProductCodes | Where-Object { $_ -eq $MSIGUID }
-     
-
-        Write-Host "MSIGUID: $MSIGUID"
-        Write-Host "InstalledMsi: $InstalledMsi"
-
-        if ($MSIGUID = $InstalledMsi) {
+        if ($MSIGUID = $InstalledMSI) {
             Log "Application '$InstallerName' installed successfully."
             Log "MSI installation log file: $LogPath"
             return $true
@@ -353,7 +331,7 @@ if ($filePath) {
     $StatusMessage = CreateStatusMessage -Status "Download" -Url $Url -InstallerName $InstallerName -Path $filePath -Message "Success"
     Log $StatusMessage
 
-    $installResult = InstallMsi -MSIPath $filePath -InstallerName $InstallerName
+    $installResult = InstallMSI -MSIPath $filePath -InstallerName $InstallerName
 
     if ($installResult) {
         $StatusMessage = CreateStatusMessage -Status "Install" -Url $Url -InstallerName $InstallerName -Path $filePath -Message "Success"
