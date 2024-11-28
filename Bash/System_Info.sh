@@ -1,135 +1,143 @@
 #!/bin/bash
 
-# Define colors
-RED='\033[0;31m'
+# Define color variables
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m'  # No Color
+MAGENTA='\033[0;35m'
+NC='\033[0m' # No Color
 
-# Define threshold values
-CPU_THRESHOLD=80         # CPU usage percentage threshold
-MEMORY_THRESHOLD=80      # Memory usage percentage threshold
-IO_WAIT_THRESHOLD=80     # I/O wait percentage threshold
-DISK_UTIL_THRESHOLD=80   # Disk utilization percentage threshold
-DISK_AVG_WAIT_THRESHOLD=10  # Average wait time in ms (e.g., 10ms)
+# Function to print aligned output
+print_aligned() {
+    printf "${CYAN}%-35s${NC} ${GREEN}%s${NC}\n" "$1" "$2"
+}
 
-# Function to check if required packages are installed
-check_and_install_packages() {
-    echo ""
-    echo -e "${CYAN}Checking required packages...${NC}"
+# Convert to IEC format
+toiec() {
+    echo -e "${MAGENTA}$(printf "%'d" $(($1 >> 10))) MiB$([[ $1 -ge 1048576 ]] && echo " ($(numfmt --from=iec --to=iec-i "${1}K")B)")${NC}"
+}
 
-    REQUIRED_PACKAGES=("sysstat" "lscpu" "bc" "df")
+# Convert to SI format
+tosi() {
+    echo -e "${MAGENTA}$(printf "%'d" $(((($1 << 10) / 1000) / 1000))) MB$([[ $1 -ge 1000000 ]] && echo " ($(numfmt --from=iec --to=si "${1}K")B)")${NC}"
+}
 
-    if command -v apt-get &> /dev/null; then
-        INSTALL_CMD="sudo apt-get install -y"
-    elif command -v yum &> /dev/null; then
-        INSTALL_CMD="sudo yum install -y"
-    elif command -v dnf &> /dev/null; then
-        INSTALL_CMD="sudo dnf install -y"
-    elif command -v zypper &> /dev/null; then
-        INSTALL_CMD="sudo zypper install -y"
-    else
-        echo -e "${RED}Unsupported package manager. Please install required packages manually: ${REQUIRED_PACKAGES[@]}${NC}"
-        exit 1
+# OS Information
+# shellcheck source=/dev/null
+. /etc/os-release
+print_aligned "Linux Distribution:" "${PRETTY_NAME:-$ID-$VERSION_ID}"
+
+# Kernel Information
+KERNEL=$(</proc/sys/kernel/osrelease)
+print_aligned "Linux Kernel:" "$KERNEL"
+
+# Computer Model
+file=/sys/class/dmi/id
+MODEL=""
+if [[ -d $file ]]; then
+    [[ -r "$file/sys_vendor" ]] && MODEL=$(<"$file/sys_vendor")
+    [[ -r "$file/product_name" ]] && MODEL+=" $(<"$file/product_name")"
+    [[ -r "$file/product_version" ]] && MODEL+=" $(<"$file/product_version")"
+elif [[ -r /sys/firmware/devicetree/base/model ]]; then
+    MODEL=$(<"/sys/firmware/devicetree/base/model")
+fi
+print_aligned "Computer Model:" "$MODEL"
+
+# Processor (CPU) Information
+mapfile -t CPU < <(sed -n 's/^model name[[:blank:]]*: *//p' /proc/cpuinfo | uniq)
+print_aligned "Processor (CPU):" "${CPU[0]}"
+
+# CPU Sockets/Cores/Threads
+CPU_THREADS=$(nproc --all)
+CPU_CORES=$(lscpu | awk '/^Core\(s\) per socket:/ {print $4}')
+CPU_SOCKETS=$(lscpu | awk '/^Socket\(s\):/ {print $2}')
+print_aligned "CPU Sockets/Cores/Threads:" "$CPU_SOCKETS/$CPU_CORES/$CPU_THREADS"
+
+# CPU Caches
+echo -e "${CYAN}CPU Caches:${NC}"
+for cache in L1d L1i L2 L3; do
+    SIZE=$(lscpu | grep "$cache cache:" | awk '{print $3}')
+    printf "\t${GREEN}%-10s${NC} %s\n" "$cache:" "$SIZE"
+done
+
+# Top 5 most active processes by CPU and memory usage
+echo -e "${CYAN}Top 5 most active processes:${NC}"
+printf "${YELLOW}%-8s %-20s %-10s %-10s${NC}\n" "PID" "COMMAND" "CPU (%)" "MEM (%)"
+ps -eo pid,comm,%cpu,%mem --sort=-%cpu | head -n 6 | awk -v green="${GREEN}" -v nc="${NC}" '
+NR>1 {printf "\t%s%-8s %-20s %-10s %-10s%s\n", green, $1, $2, $3, $4, nc}'
+
+# Architecture
+ARCHITECTURE=$(getconf LONG_BIT)
+print_aligned "Architecture:" "$HOSTTYPE (${ARCHITECTURE}-bit)"
+
+# Memory Information
+MEMINFO=$(</proc/meminfo)
+TOTAL_PHYSICAL_MEM=$(echo "$MEMINFO" | awk '/^MemTotal:/ { print $2 }')
+print_aligned "Total memory (RAM):" "$(toiec "$TOTAL_PHYSICAL_MEM") ($(tosi "$TOTAL_PHYSICAL_MEM"))"
+
+# Swap Information
+TOTAL_SWAP=$(echo "$MEMINFO" | awk '/^SwapTotal:/ { print $2 }')
+print_aligned "Total swap space:" "$(toiec "$TOTAL_SWAP") ($(tosi "$TOTAL_SWAP"))"
+
+# Disk Information
+echo -e "${CYAN}Disk space:${NC}"
+DISKS=$(lsblk -dbn 2>/dev/null | awk '$6=="disk" {print $1, $4}')
+while IFS=" " read -r NAME SIZE; do
+    if [[ -n "$SIZE" && "$SIZE" =~ ^[0-9]+$ ]]; then
+        SIZE_FORMATTED="$(printf "%'d" $((SIZE >> 20))) MiB ($(numfmt --to=iec-i "$SIZE")B)"
+        printf "\t${GREEN}%-10s${NC} %s\n" "$NAME:" "$SIZE_FORMATTED"
     fi
+done <<<"$DISKS"
 
-    for package in "${REQUIRED_PACKAGES[@]}"; do
-        if ! command -v "$package" &> /dev/null; then
-            echo -e "${YELLOW}Package '$package' not found. Installing...${NC}"
-            $INSTALL_CMD "$package"
-        else
-            echo -e "${GREEN}Package '$package' is already installed.${NC}"
-        fi
-    done
-    echo ""
-}
+# GPU Information
+GPU=$(lspci | grep -i 'vga\|3d\|2d')
+print_aligned "Graphics Processor (GPU):" "$GPU"
 
-# Function to display system information
-get_system_info() {
-    echo ""
-    echo -e "${CYAN}Gathering system information...${NC}"
-    echo -e "----------------------------------------"
+# Hostname and Computer Name
+print_aligned "Computer name:" "$HOSTNAME"
+print_aligned "Hostname:" "$(hostname -f)"
 
-    echo -e "${BLUE}Hostname:${NC} $(hostname -f)"
-    echo -e "${BLUE}OS and Kernel:${NC} $(uname -o) $(uname -r)"
-    echo -e "${BLUE}CPU Model:${NC} $(lscpu | grep 'Model name' | awk -F ': ' '{print $2}')"
-    echo -e "${BLUE}CPU Cores:${NC} $(lscpu | grep '^CPU(s):' | awk -F ': ' '{print $2}')"
-    echo -e "${BLUE}Total RAM:${NC} $(free -h | awk '/^Mem:/ {print $2}')"
-    echo -e "${BLUE}Disk Space:${NC}"
-    df -h --output=source,size,used,avail,pcent / | sed '1 s/^/  /'
-    IP_ADDRESS=$(hostname -I | awk '{print $1}')
-    echo -e "${BLUE}IP Address:${NC} ${IP_ADDRESS:-Not Available}"
-    echo -e "${BLUE}System Uptime:${NC} $(uptime -p)"
-    echo -e "----------------------------------------\n"
-    echo ""
-}
+# Network Interfaces and IP Addresses
+echo -e "${CYAN}IPv4 addresses:${NC}"
+for interface in $(ip -o -4 addr show | awk '{print $2}'); do
+    IP=$(ip -o -4 addr show $interface | awk '{print $4}')
+    printf "\t${GREEN}%-10s${NC} %s\n" "$interface:" "$IP"
+done
 
-# Function to check CPU usage
-check_cpu_usage() {
-    echo -e "${CYAN}Checking CPU usage...${NC}"
-    ps -eo pid,comm,%cpu --sort=-%cpu | awk -v threshold=$CPU_THRESHOLD -v red=$RED -v nc=$NC '
-    NR==1 {print $0}
-    NR>1 && $3 > threshold {printf "%s%s%s\n", red, $0, nc}
-    '
-}
-
-# Function to check memory usage
-check_memory_usage() {
-    echo -e "${CYAN}Checking memory usage...${NC}"
-    ps -eo pid,comm,%mem --sort=-%mem | awk -v threshold=$MEMORY_THRESHOLD -v red=$RED -v nc=$NC '
-    NR==1 {print $0}
-    NR>1 && $3 > threshold {printf "%s%s%s\n", red, $0, nc}
-    '
-}
-
-# Function to check CPU I/O wait
-check_io_wait() {
-    echo -e "${CYAN}Checking I/O wait time...${NC}"
-    IOWAIT=$(iostat -c 1 2 | awk 'NR==4 {print $4}')
-    if (( $(echo "$IOWAIT > $IO_WAIT_THRESHOLD" | bc -l) )); then
-        echo -e "${RED}High CPU I/O wait detected: $IOWAIT%${NC}"
+# MAC Addresses
+echo -e "${CYAN}MAC addresses:${NC}"
+for interface in $(ip -o link show | awk -F': ' '{print $2}'); do
+    mac_file="/sys/class/net/$interface/address"
+    if [[ -r $mac_file ]]; then
+        MAC=$(<"$mac_file")
+        printf "\t${GREEN}%-10s${NC} %s\n" "$interface:" "$MAC"
     else
-        echo -e "${GREEN}CPU I/O wait is within normal limits: $IOWAIT%${NC}"
+        printf "\t${YELLOW}%-10s${NC} ${RED}MAC address not available${NC}\n" "$interface:"
     fi
-}
+done
 
-# Function to check disk I/O
-check_disk_io() {
-    echo -e "${CYAN}Checking disk I/O utilization and wait time...${NC}"
-    iostat -x 1 2 | awk -v util_threshold=$DISK_UTIL_THRESHOLD -v wait_threshold=$DISK_AVG_WAIT_THRESHOLD -v red=$RED -v green=$GREEN -v nc=$NC '
-    NR > 7 {
-        if ($14 > util_threshold) {
-            printf "%sHigh disk utilization on %s: %.2f%%%s\n", red, $1, $14, nc
-        }
-        if ($10 > wait_threshold) {
-            printf "%sHigh average wait time on %s: %.2f ms%s\n", red, $1, $10, nc
-        }
-    }
-    '
-}
+# Computer ID
+if [[ -r /var/lib/dbus/machine-id ]]; then
+    COMPUTER_ID=$(</var/lib/dbus/machine-id)
+    print_aligned "Computer ID:" "$COMPUTER_ID"
+fi
 
-# Check and install required packages
-check_and_install_packages
+# Time Zone
+TIME_ZONE=$(timedatectl show -p Timezone --value)
+print_aligned "Time zone:" "$TIME_ZONE"
 
-# Display system information
-get_system_info
+# Language
+print_aligned "Language:" "$LANG"
 
-# Check for high CPU usage
-check_cpu_usage
-echo
+# Virtual Machine (VM) Hypervisor
+VM=$(systemd-detect-virt -v 2>/dev/null)
+if [[ -n $VM ]]; then
+    print_aligned "Virtual Machine (VM) hypervisor:" "$VM"
+fi
 
-# Check for high memory usage
-check_memory_usage
-echo
+# Bash Version
+print_aligned "Bash Version:" "$BASH_VERSION"
 
-# Check for high CPU I/O wait
-check_io_wait
-echo
-
-# Check for high disk I/O utilization and wait times
-check_disk_io
-echo
-
-echo -e "${GREEN}System check completed.${NC}"
+# Terminal Information
+print_aligned "Terminal:" "$TERM"
