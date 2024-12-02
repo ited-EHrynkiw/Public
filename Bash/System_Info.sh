@@ -91,8 +91,12 @@ while IFS=" " read -r NAME SIZE; do
 done <<<"$DISKS"
 
 # GPU Information
-GPU=$(lspci | grep -i 'vga\|3d\|2d')
-print_aligned "Graphics Processor (GPU):" "$GPU"
+if command -v lspci &>/dev/null; then
+    GPU=$(lspci | grep -iE 'vga|3d|2d')
+    print_aligned "Graphics Processor (GPU):" "$GPU"
+else
+    print_aligned "Graphics Processor (GPU):" "lspci command not found"
+fi
 
 # Hostname and Computer Name
 print_aligned "Computer name:" "$HOSTNAME"
